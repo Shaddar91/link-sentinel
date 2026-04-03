@@ -1,0 +1,225 @@
+/*
+ * Shared PDF styles for link-sentinel Gotenberg templates.
+ * Print-optimized, A4, professional dark-on-white.
+ * Injected into HTML templates at render time.
+ */
+
+@page {
+  size: A4;
+  margin: 18mm 15mm 20mm 15mm;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.55;
+  color: #1a1a1a;
+  background: #fff;
+  margin: 0;
+  padding: 0;
+}
+
+/* --- Typography --- */
+
+h1, h2, h3, h4 {
+  color: #111;
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+  page-break-after: avoid;
+}
+
+h1 {
+  font-size: 18pt;
+  border-bottom: 2px solid #333;
+  padding-bottom: 4px;
+}
+
+h2 {
+  font-size: 14pt;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 3px;
+}
+
+h3 {
+  font-size: 12pt;
+}
+
+h4 {
+  font-size: 10.5pt;
+  color: #333;
+}
+
+p {
+  margin: 0.4em 0;
+}
+
+a {
+  color: #1a5276;
+  text-decoration: none;
+}
+
+strong {
+  font-weight: 600;
+}
+
+/* --- Code --- */
+
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 9pt;
+  background: #f4f4f4;
+  border: 1px solid #e0e0e0;
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+pre {
+  background: #f6f8fa;
+  border: 1px solid #dce0e5;
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  line-height: 1.4;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 8.5pt;
+}
+
+/* --- Tables --- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  font-size: 9.5pt;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+thead {
+  background: #f0f0f0;
+}
+
+th, td {
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  font-weight: 600;
+  color: #222;
+}
+
+tr:nth-child(even) {
+  background: #fafafa;
+}
+
+/* --- Lists --- */
+
+ul, ol {
+  margin: 0.4em 0;
+  padding-left: 1.8em;
+}
+
+li {
+  margin-bottom: 0.2em;
+}
+
+li > ul, li > ol {
+  margin-top: 0.15em;
+  margin-bottom: 0.15em;
+}
+
+/* --- Blockquote --- */
+
+blockquote {
+  border-left: 3px solid #999;
+  margin: 0.6em 0;
+  padding: 4px 12px;
+  color: #555;
+  background: #f9f9f9;
+}
+
+/* --- Horizontal rule --- */
+
+hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 1em 0;
+}
+
+/* --- Report header --- */
+
+.report-header {
+  margin-bottom: 1.2em;
+  padding-bottom: 0.6em;
+  border-bottom: 2px solid #333;
+}
+
+.report-header h1 {
+  margin: 0 0 4px 0;
+  border: none;
+  padding: 0;
+}
+
+.report-meta {
+  font-size: 9pt;
+  color: #666;
+}
+
+.report-meta span {
+  margin-right: 16px;
+}
+
+/* --- Footer (Gotenberg header/footer) --- */
+
+.footer {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 8pt;
+  color: #999;
+  text-align: center;
+  width: 100%;
+}
+
+/* --- Print helpers --- */
+
+.page-break {
+  page-break-before: always;
+  break-before: always;
+}
+
+.no-break {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+/* --- Keyword/tag pills --- */
+
+.tag {
+  display: inline-block;
+  background: #e8eef3;
+  color: #2c5777;
+  font-size: 8pt;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+/* --- Image handling --- */
+
+img {
+  max-width: 100%;
+  height: auto;
+}

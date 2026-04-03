@@ -6,12 +6,12 @@ from datetime import datetime
 from pathlib import Path
 
 import structlog
-from fpdf import FPDF
+
+from .pdf_generator import markdown_to_pdf
 
 log = structlog.get_logger()
 
 TRACKING_DIR = Path(__file__).parent.parent / "data" / "tracking"
-PDF_DIR = Path(__file__).parent.parent / "data" / "pdfs"
 MAX_MSG_LEN = 4000
 
 
@@ -147,35 +147,6 @@ def _textwrap_lines(text: str, max_chars: int = 90) -> str:
     return "\n".join(result)
 
 
-def md_to_pdf(content: str, label: str) -> Path:
-    """Convert markdown text to a PDF file."""
-    PDF_DIR.mkdir(parents=True, exist_ok=True)
-
-    content = content.encode("ascii", errors="ignore").decode("ascii")
-    plain = _md_to_plain(content)
-
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_left_margin(20)
-    pdf.set_right_margin(20)
-    pdf.add_page()
-
-    w = pdf.w - pdf.l_margin - pdf.r_margin
-
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.multi_cell(w, 8, _strip_md(label))
-    pdf.ln(3)
-
-    # Write entire content as one block — let fpdf handle all wrapping
-    pdf.set_font("Helvetica", "", 9)
-    pdf.multi_cell(w, 4, plain)
-
-    safe_label = label.replace("/", "_").replace(" ", "_")
-    filepath = PDF_DIR / f"{safe_label}.pdf"
-    pdf.output(str(filepath))
-    return filepath
-
-
 async def check_results(bot_app) -> None:
     """Background loop — auto-delivers results in the format the user chose upfront."""
     while True:
@@ -206,7 +177,9 @@ async def check_results(bot_app) -> None:
                 delivery = record.get("delivery_format", "msg")
 
                 if delivery == "pdf":
-                    pdf_path = md_to_pdf(content, label)
+                    task_type = record.get("task_type", "repo_analysis")
+                    template = "video_summary" if task_type == "video_summary" else "repo_analysis"
+                    pdf_path = await markdown_to_pdf(content, label, template=template)
                     await bot_app.bot.send_document(
                         chat_id=chat_id,
                         document=open(pdf_path, "rb"),

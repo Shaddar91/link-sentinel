@@ -15,7 +15,8 @@ from .config import Settings, get_settings
 from .github_parser import extract_github_urls, GitHubRepo
 from .youtube_parser import extract_youtube_urls, YouTubeVideo
 from .task_generator import create_repo_analysis_task, write_task_file
-from .result_watcher import track_task, check_results, md_to_pdf, split_message
+from .result_watcher import track_task, check_results, split_message
+from .pdf_generator import markdown_to_pdf
 from .video_processor import process_video
 
 log = structlog.get_logger()
@@ -257,7 +258,11 @@ class LinkSentinelBot:
             title = video_title or video.video_id
             log.info("video_summarized", video_id=video.video_id)
 
-            pdf_path = md_to_pdf(summary, title)
+            pdf_path = await markdown_to_pdf(
+                summary, title,
+                template="video_summary",
+                metadata={"video_title": title, "video_url": video.url},
+            )
             await bot.send_document(
                 chat_id=chat_id,
                 document=open(pdf_path, "rb"),
