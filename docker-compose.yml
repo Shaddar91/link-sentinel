@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  link-sentinel:
+    build: .
+    container_name: link-sentinel
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      #Mount pipeline directory for task file creation
+      - /home/shaddar/Documents/workspace/ai-task-automation/data/pipeline/transposed:/app/pipeline/transposed
+      #Mount GitHub clone directory
+      - /home/shaddar/Documents/workspace/personal/projects/github/repo-analysis/cloned:/app/github/cloned
+      #Mount GitHub analysis directory
+      - /home/shaddar/Documents/workspace/personal/projects/github/repo-analysis/analysis-docs:/app/github/analysis-docs
+      #Mount YouTube transcript directory
+      - /home/shaddar/.transcribes:/app/transcribes
+      #Mount Node.js / Claude CLI for video summarization
+      - /home/shaddar/.nvm/versions/node/v20.10.0:/opt/node:ro
+      - /home/shaddar/.claude:/home/sentinel/.claude:ro
+    environment:
+      - PIPELINE_TRANSPOSED_DIR=/app/pipeline/transposed
+      - GITHUB_CLONE_DIR=/app/github/cloned
+      - GITHUB_ANALYSIS_DIR=/app/github/analysis-docs
+      - YOUTUBE_TRANSCRIPT_DIR=/app/transcribes
+      - CLAUDE_PATH=/opt/node/bin/claude
+      - PATH=/opt/node/bin:/usr/local/bin:/usr/bin:/bin
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('api.telegram.org', 443), timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
