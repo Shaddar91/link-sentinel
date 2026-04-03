@@ -5,6 +5,9 @@ services:
     build: .
     container_name: link-sentinel
     restart: unless-stopped
+    depends_on:
+      gotenberg:
+        condition: service_healthy
     env_file:
       - .env
     volumes:
@@ -26,6 +29,7 @@ services:
       - YOUTUBE_TRANSCRIPT_DIR=/app/transcribes
       - CLAUDE_PATH=/opt/node/bin/claude
       - PATH=/opt/node/bin:/usr/local/bin:/usr/bin:/bin
+      - GOTENBERG_URL=http://gotenberg:3000
     logging:
       driver: json-file
       options:
@@ -37,3 +41,24 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: gotenberg
+    restart: unless-stopped
+    environment:
+      - LIBREOFFICE_DISABLE_ROUTES=true
+      - CHROMIUM_MAX_CONCURRENCY=2
+      - API_TIMEOUT=60s
+      - LOG_LEVEL=warn
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
