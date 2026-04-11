@@ -141,7 +141,9 @@ def summarize_with_claude(transcript: str, video_title: str | None = None) -> st
 
     if result.returncode != 0:
         log.error("claude_failed", exit_code=result.returncode, stderr=result.stderr[:500])
-        return f"Claude summarization failed (exit {result.returncode})"
+        raise RuntimeError(
+            f"Claude CLI failed (exit {result.returncode}): {result.stderr.strip()[:300]}"
+        )
 
     return result.stdout.strip()
 

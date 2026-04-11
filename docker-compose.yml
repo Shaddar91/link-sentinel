@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   link-sentinel:
     build: .
@@ -19,6 +17,8 @@ services:
       - /home/shaddar/Documents/workspace/personal/projects/github/repo-analysis/analysis-docs:/app/github/analysis-docs
       #Mount YouTube transcript directory
       - /home/shaddar/.transcribes:/app/transcribes
+      #Persistent data — pending buttons, tracking records, generated PDFs survive restarts
+      - ./data:/app/data
       #Mount Node.js / Claude CLI for video summarization
       - /home/shaddar/.nvm/versions/node/v20.10.0:/opt/node:ro
       - /home/shaddar/.claude:/home/sentinel/.claude:ro

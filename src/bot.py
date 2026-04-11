@@ -1,5 +1,9 @@
 """Telegram bot for monitoring GitHub and YouTube links."""
 import asyncio
+import json
+from dataclasses import asdict
+from pathlib import Path
+
 import structlog
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -53,8 +57,42 @@ class LinkSentinelBot:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.application: Application = None
-        # Pending links waiting for delivery format choice
-        self._pending: dict[str, dict] = {}
+        #Pending links waiting for delivery format choice — persisted to disk so restarts don't wipe state
+        self._pending_path = Path(__file__).parent.parent / "data" / "state" / "pending.json"
+        self._pending: dict[str, dict] = self._load_pending()
+
+    def _load_pending(self) -> dict[str, dict]:
+        """Load pending state from disk, reconstructing dataclasses."""
+        try:
+            if not self._pending_path.exists():
+                return {}
+            raw = json.loads(self._pending_path.read_text())
+            restored: dict[str, dict] = {}
+            for key, entry in raw.items():
+                if entry.get("type") == "repo" and isinstance(entry.get("repo"), dict):
+                    entry["repo"] = GitHubRepo(**entry["repo"])
+                restored[key] = entry
+            log.info("pending_loaded", count=len(restored))
+            return restored
+        except Exception as e:
+            log.warning("pending_load_failed", error=str(e))
+            return {}
+
+    def _save_pending(self) -> None:
+        """Persist pending state to disk atomically."""
+        try:
+            self._pending_path.parent.mkdir(parents=True, exist_ok=True)
+            serializable: dict[str, dict] = {}
+            for key, entry in self._pending.items():
+                copy = dict(entry)
+                if copy.get("type") == "repo" and not isinstance(copy.get("repo"), dict):
+                    copy["repo"] = asdict(copy["repo"])
+                serializable[key] = copy
+            tmp = self._pending_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(serializable, indent=2))
+            tmp.replace(self._pending_path)
+        except Exception as e:
+            log.error("pending_save_failed", error=str(e))
 
     def _is_allowed(self, update: Update) -> bool:
         """Check if the message comes from an allowed chat."""
@@ -141,6 +179,7 @@ class LinkSentinelBot:
                 "chat_id": chat_id,
                 "message_id": message_id,
             }
+            self._save_pending()
 
             keyboard = InlineKeyboardMarkup([
                 [
@@ -160,18 +199,20 @@ class LinkSentinelBot:
                 f"YouTube video detected: {video.video_id}\n"
                 f"Transcribing and summarizing... this may take a minute."
             )
-            await self._process_video(
+            task = asyncio.create_task(self._process_video(
                 query=None,
                 video=video,
                 sender_name=sender_name,
                 chat_id=chat_id,
                 message_id=message_id,
                 delivery_format="pdf",
-            )
+            ))
+            task.add_done_callback(self._log_task_exception)
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle delivery format choice."""
         query = update.callback_query
+        log.info("callback_received", data=query.data, user_id=query.from_user.id if query.from_user else None)
         await query.answer()
 
         if not self._is_allowed(update):
@@ -179,14 +220,21 @@ class LinkSentinelBot:
 
         data = query.data
         if ":" not in data:
+            log.warning("callback_malformed", data=data)
             return
 
         key, delivery_format = data.rsplit(":", 1)
 
         pending = self._pending.pop(key, None)
         if not pending:
-            await query.edit_message_text("This link has expired. Send it again.")
+            log.warning("callback_stale", key=key)
+            try:
+                await query.edit_message_text("This link has expired. Send it again.")
+            except Exception as e:
+                log.warning("expired_edit_failed", error=str(e))
             return
+
+        self._save_pending()
 
         chat_id = pending["chat_id"]
         message_id = pending["message_id"]
@@ -277,6 +325,27 @@ class LinkSentinelBot:
                 text=f"Failed to process video {video.video_id}: {str(e)[:200]}",
             )
 
+    async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Global error handler — stops exceptions from silently vanishing."""
+        err = context.error
+        log.error(
+            "handler_error",
+            error=str(err),
+            error_type=type(err).__name__ if err else "unknown",
+        )
+
+    def _log_task_exception(self, task: asyncio.Task) -> None:
+        """Done-callback for fire-and-forget background tasks — logs unhandled errors."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.error(
+                "background_task_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+
     def build_application(self) -> Application:
         """Build and configure the Telegram application."""
         self.application = (
@@ -295,6 +364,8 @@ class LinkSentinelBot:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
             )
 
+        self.application.add_error_handler(self._error_handler)
+
         return self.application
 
     async def run(self) -> None:
@@ -309,7 +380,10 @@ class LinkSentinelBot:
 
         await app.initialize()
         await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
+        await app.updater.start_polling(
+            drop_pending_updates=False,
+            allowed_updates=Update.ALL_TYPES,
+        )
 
         log.info("bot_running")
 
