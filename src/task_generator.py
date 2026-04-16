@@ -19,6 +19,33 @@ def generate_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+DETAILED_DEPTH = "detailed"
+STANDARD_DEPTH = "standard"
+
+
+def _resolve_depth_config(analysis_depth: str) -> dict[str, str]:
+    """Pick agent + priority + complexity based on requested analysis depth.
+
+    Detailed mode routes to a stronger analytical agent with a high complexity
+    score so the pipeline's orchestrator picks a larger model (Opus).
+    """
+    if analysis_depth == DETAILED_DEPTH:
+        return {
+            "depth": DETAILED_DEPTH,
+            "agent": "code-reviewer",
+            "priority_bump": "High",
+            "complexity_score": "85",
+            "focus_hint": "deep (architecture, code quality, security, dependencies, competitive landscape)",
+        }
+    return {
+        "depth": STANDARD_DEPTH,
+        "agent": "repo-analyzer",
+        "priority_bump": None,
+        "complexity_score": "50",
+        "focus_hint": "standard",
+    }
+
+
 def create_repo_analysis_task(
     repo: GitHubRepo,
     clone_dir: Path,
@@ -27,6 +54,7 @@ def create_repo_analysis_task(
     priority: str = "Medium",
     sender_name: Optional[str] = None,
     user_prompt: str = "",
+    analysis_depth: str = STANDARD_DEPTH,
 ) -> str:
     """
     Create a task file content for repository analysis.
@@ -38,14 +66,19 @@ def create_repo_analysis_task(
         analysis_focus: Focus area (architecture, code-quality, features, all)
         priority: Task priority (High, Medium, Low)
         sender_name: Telegram username who sent the link
+        user_prompt: The prompt to send to the downstream agent
+        analysis_depth: "standard" or "detailed" — picks agent + complexity
 
     Returns:
         Task file content as string
     """
     task_id = generate_task_id()
     now = datetime.now()
+    depth_cfg = _resolve_depth_config(analysis_depth)
+    effective_priority = depth_cfg["priority_bump"] or priority
+    agent = depth_cfg["agent"]
 
-    summary = f"Analyze GitHub repository {repo.full_name}"
+    summary = f"Analyze GitHub repository {repo.full_name} ({depth_cfg['depth']})"
 
     context_lines = [
         f"- Repository URL: {repo.url}",
@@ -77,9 +110,11 @@ def create_repo_analysis_task(
 **Task ID:** {task_id}
 **Created:** {now.strftime('%Y-%m-%d %H:%M:%S')}
 **Source:** link-sentinel (Telegram monitor)
-**Priority:** {priority}
+**Priority:** {effective_priority}
 **Project:** github-repo-analysis
 **Type:** analysis
+**Analysis-Depth:** {depth_cfg['depth']}
+**Complexity-Score:** {depth_cfg['complexity_score']}
 
 ## Summary
 {summary}
@@ -102,7 +137,7 @@ def create_repo_analysis_task(
 {user_prompt if user_prompt else "No specific request — perform general analysis."}
 
 ## Analysis Focus
-{analysis_focus}
+{analysis_focus} ({depth_cfg['focus_hint']})
 
 ## Action Items
 {chr(10).join(action_items)}
@@ -113,13 +148,14 @@ def create_repo_analysis_task(
 ## Dynamic Agent Config
 ```json
 {{
-  "agent": "repo-analyzer",
-  "source": "agents/models/sonnet-4.5/repo-analyzer.json"
+  "agent": "{agent}",
+  "source": "agents/models/default/{agent}.json",
+  "analysis_depth": "{depth_cfg['depth']}"
 }}
 ```
 
 ---
-**Target Agent:** repo-analyzer
+**Target Agent:** {agent}
 **Agent Available:** Yes
 **Routing Confidence:** 95%
 **Ready Status:** READY_FOR_EXECUTION
@@ -131,12 +167,32 @@ def create_repo_analysis_task(
     return task_content
 
 
+def _resolve_video_depth_config(analysis_depth: str) -> dict[str, str]:
+    """Video equivalent of the repo depth resolver."""
+    if analysis_depth == DETAILED_DEPTH:
+        return {
+            "depth": DETAILED_DEPTH,
+            "agent": "scholar",
+            "priority_bump": "High",
+            "complexity_score": "75",
+            "focus_hint": "deep (section-by-section, technical details, sources, counterpoints)",
+        }
+    return {
+        "depth": STANDARD_DEPTH,
+        "agent": "video-summarizer",
+        "priority_bump": None,
+        "complexity_score": "40",
+        "focus_hint": "standard",
+    }
+
+
 def create_video_summary_task(
     video: YouTubeVideo,
     transcript_dir: Path,
     priority: str = "Medium",
     sender_name: Optional[str] = None,
     user_prompt: str = "",
+    analysis_depth: str = STANDARD_DEPTH,
 ) -> str:
     """
     Create a task file content for YouTube video summarization.
@@ -146,14 +202,19 @@ def create_video_summary_task(
         transcript_dir: Directory where transcripts are saved
         priority: Task priority (High, Medium, Low)
         sender_name: Telegram username who sent the link
+        user_prompt: The prompt to send to the downstream agent
+        analysis_depth: "standard" or "detailed" — picks agent + complexity
 
     Returns:
         Task file content as string
     """
     task_id = generate_task_id()
     now = datetime.now()
+    depth_cfg = _resolve_video_depth_config(analysis_depth)
+    effective_priority = depth_cfg["priority_bump"] or priority
+    agent = depth_cfg["agent"]
 
-    summary = f"Transcribe and summarize YouTube video {video.video_id}"
+    summary = f"Transcribe and summarize YouTube video {video.video_id} ({depth_cfg['depth']})"
 
     context_lines = [
         f"- Video URL: {video.url}",
@@ -183,9 +244,11 @@ def create_video_summary_task(
 **Task ID:** {task_id}
 **Created:** {now.strftime('%Y-%m-%d %H:%M:%S')}
 **Source:** link-sentinel (Telegram monitor)
-**Priority:** {priority}
+**Priority:** {effective_priority}
 **Project:** youtube-video-summary
 **Type:** summary
+**Analysis-Depth:** {depth_cfg['depth']}
+**Complexity-Score:** {depth_cfg['complexity_score']}
 
 ## Summary
 {summary}
@@ -203,6 +266,9 @@ def create_video_summary_task(
 ## User Request
 {user_prompt if user_prompt else "No specific request — provide general summary."}
 
+## Analysis Focus
+{depth_cfg['focus_hint']}
+
 ## Action Items
 {chr(10).join(action_items)}
 
@@ -212,13 +278,14 @@ def create_video_summary_task(
 ## Dynamic Agent Config
 ```json
 {{
-  "agent": "video-summarizer",
-  "source": "agents/models/sonnet-4.5/video-summarizer.json"
+  "agent": "{agent}",
+  "source": "agents/models/default/{agent}.json",
+  "analysis_depth": "{depth_cfg['depth']}"
 }}
 ```
 
 ---
-**Target Agent:** video-summarizer
+**Target Agent:** {agent}
 **Agent Available:** Yes
 **Routing Confidence:** 95%
 **Ready Status:** READY_FOR_EXECUTION

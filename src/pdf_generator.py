@@ -32,6 +32,10 @@ def _render_html(content: str, template: str, metadata: dict[str, str]) -> str:
     html = html.replace("{{content}}", html_body)
     html = html.replace("{{analysis_date}}", datetime.now().strftime("%Y-%m-%d"))
 
+    #Defaults for template placeholders that every template expects — prevents
+    #raw '{{key}}' leaking into rendered HTML when callers don't pass them.
+    metadata = {"analysis_depth": "Standard", **metadata}
+
     for key, value in metadata.items():
         html = html.replace(f"{{{{{key}}}}}", value)
 

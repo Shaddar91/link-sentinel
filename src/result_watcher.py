@@ -1,4 +1,9 @@
-"""Watch for completed analysis/summary results and deliver via Telegram."""
+"""Watch for completed analysis/summary results and deliver via Telegram.
+
+Delivery is PDF-only — direct-to-chat text output was removed so that every
+analysis flows through the same styled PDF pipeline regardless of content type
+or depth.
+"""
 import asyncio
 import json
 import os
@@ -12,7 +17,6 @@ from .pdf_generator import markdown_to_pdf
 log = structlog.get_logger()
 
 TRACKING_DIR = Path(__file__).parent.parent / "data" / "tracking"
-MAX_MSG_LEN = 4000
 
 
 def track_task(
@@ -21,9 +25,9 @@ def track_task(
     task_type: str,
     result_path: Path,
     label: str,
-    delivery_format: str = "msg",
+    analysis_depth: str = "standard",
 ) -> None:
-    """Save a tracking record with delivery preference."""
+    """Save a tracking record so the watcher can deliver the PDF when the result lands."""
     TRACKING_DIR.mkdir(parents=True, exist_ok=True)
 
     record = {
@@ -32,123 +36,18 @@ def track_task(
         "task_type": task_type,
         "result_path": str(result_path),
         "label": label,
-        "delivery_format": delivery_format,
+        "analysis_depth": analysis_depth,
         "created": datetime.now().timestamp(),
     }
 
     safe_label = label.replace("/", "_")
     filename = f"{task_type}_{safe_label}_{chat_id}.json"
     (TRACKING_DIR / filename).write_text(json.dumps(record, indent=2))
-    log.info("task_tracked", filename=filename, delivery=delivery_format)
-
-
-def split_message(text: str, max_len: int = MAX_MSG_LEN) -> list[str]:
-    """Split text into chunks that fit Telegram's message limit."""
-    if len(text) <= max_len:
-        return [text]
-
-    chunks = []
-    remaining = text
-
-    while remaining:
-        if len(remaining) <= max_len:
-            chunks.append(remaining)
-            break
-
-        cut = remaining[:max_len].rfind("\n\n")
-        if cut > max_len // 2:
-            chunks.append(remaining[:cut].rstrip())
-            remaining = remaining[cut:].lstrip("\n")
-            continue
-
-        cut = remaining[:max_len].rfind("\n")
-        if cut > max_len // 2:
-            chunks.append(remaining[:cut].rstrip())
-            remaining = remaining[cut:].lstrip("\n")
-            continue
-
-        chunks.append(remaining[:max_len])
-        remaining = remaining[max_len:]
-
-    return chunks
-
-
-def _strip_md(text: str) -> str:
-    """Strip markdown formatting to plain text."""
-    import re
-    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1', text)
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'__(.+?)__', r'\1', text)
-    text = re.sub(r'\*(.+?)\*', r'\1', text)
-    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
-    text = re.sub(r'`(.+?)`', r'\1', text)
-    return text
-
-
-def _md_to_plain(content: str) -> str:
-    """Convert full markdown to clean plain text."""
-    import re
-    lines = []
-    in_code = False
-
-    for line in content.split("\n"):
-        s = line.strip()
-
-        if s.startswith("```"):
-            in_code = not in_code
-            continue
-
-        if in_code:
-            lines.append(f"    {line.rstrip()}")
-            continue
-
-        if s.startswith("# "):
-            lines.append("")
-            lines.append(s[2:].upper())
-            lines.append("=" * len(s[2:]))
-        elif s.startswith("## "):
-            lines.append("")
-            lines.append(s[3:])
-            lines.append("-" * len(s[3:]))
-        elif s.startswith("### "):
-            lines.append("")
-            lines.append(s[4:])
-        elif s.startswith("- ") or s.startswith("* "):
-            lines.append(f"  - {_strip_md(s[2:])}")
-        elif s.startswith("  - ") or s.startswith("  * "):
-            lines.append(f"    - {_strip_md(s[4:])}")
-        elif s == "---":
-            lines.append("")
-            lines.append("-" * 60)
-            lines.append("")
-        elif s == "":
-            lines.append("")
-        else:
-            lines.append(_strip_md(s))
-
-    return "\n".join(lines)
-
-
-def _textwrap_lines(text: str, max_chars: int = 90) -> str:
-    """Wrap long lines to max_chars, preserving short lines and indentation."""
-    import textwrap
-    result = []
-    for line in text.split("\n"):
-        if len(line) <= max_chars:
-            result.append(line)
-        else:
-            indent = len(line) - len(line.lstrip())
-            prefix = line[:indent]
-            wrapped = textwrap.fill(
-                line.strip(), width=max_chars,
-                initial_indent=prefix, subsequent_indent=prefix + "  ",
-            )
-            result.append(wrapped)
-    return "\n".join(result)
+    log.info("task_tracked", filename=filename, depth=analysis_depth)
 
 
 async def check_results(bot_app) -> None:
-    """Background loop — auto-delivers results in the format the user chose upfront."""
+    """Background loop — delivers every completed analysis as a styled PDF."""
     while True:
         await asyncio.sleep(30)
 
@@ -174,34 +73,22 @@ async def check_results(bot_app) -> None:
 
                 chat_id = record["chat_id"]
                 label = record["label"]
-                delivery = record.get("delivery_format", "msg")
+                task_type = record.get("task_type", "repo_analysis")
+                depth = record.get("analysis_depth", "standard")
 
-                if delivery == "pdf":
-                    task_type = record.get("task_type", "repo_analysis")
-                    template = "video_summary" if task_type == "video_summary" else "repo_analysis"
-                    pdf_path = await markdown_to_pdf(content, label, template=template)
-                    await bot_app.bot.send_document(
-                        chat_id=chat_id,
-                        document=open(pdf_path, "rb"),
-                        filename=f"{label.replace('/', '_')}_analysis.pdf",
-                        caption=f"Analysis: {label}",
-                    )
-                    log.info("result_sent_pdf", chat_id=chat_id, label=label)
+                template = "video_summary" if task_type == "video_summary" else "repo_analysis"
+                metadata = {"analysis_depth": depth.capitalize()}
+                pdf_path = await markdown_to_pdf(content, label, template=template, metadata=metadata)
 
-                else:
-                    header = f"Result: {label}\n{'='*30}\n\n"
-                    full_text = header + content
-                    chunks = split_message(full_text)
-                    total = len(chunks)
-
-                    for i, chunk in enumerate(chunks):
-                        if total > 1 and i > 0:
-                            chunk = f"[{i+1}/{total}]\n{chunk}"
-                        await bot_app.bot.send_message(chat_id=chat_id, text=chunk)
-                        if i < total - 1:
-                            await asyncio.sleep(0.5)
-
-                    log.info("result_sent_msg", chat_id=chat_id, label=label, parts=total)
+                safe_label = label.replace("/", "_")
+                suffix = "_detailed" if depth == "detailed" else ""
+                await bot_app.bot.send_document(
+                    chat_id=chat_id,
+                    document=open(pdf_path, "rb"),
+                    filename=f"{safe_label}{suffix}_analysis.pdf",
+                    caption=f"{depth.capitalize()} analysis: {label}",
+                )
+                log.info("result_sent_pdf", chat_id=chat_id, label=label, depth=depth)
 
                 track_file.unlink()
 

@@ -19,7 +19,7 @@ from .config import Settings, get_settings
 from .github_parser import extract_github_urls, GitHubRepo
 from .youtube_parser import extract_youtube_urls, YouTubeVideo
 from .task_generator import create_repo_analysis_task, write_task_file
-from .result_watcher import track_task, check_results, split_message
+from .result_watcher import track_task, check_results
 from .pdf_generator import markdown_to_pdf
 from .video_processor import process_video
 
@@ -40,6 +40,32 @@ REPO_PROMPT = (
     "Focus on what matters for deciding whether to use it."
 )
 
+DETAILED_REPO_PROMPT = (
+    "Produce an IN-DEPTH analysis of this repository. Go deeper than a typical review — "
+    "read the actual source, not just README and docs. Cover:\n\n"
+    "1. One-paragraph plain-language summary of what it does.\n"
+    "2. Architecture deep-dive: components, their responsibilities, and how data flows "
+    "between them. Include a mermaid diagram if helpful.\n"
+    "3. Tech stack breakdown: language, frameworks, notable libraries, why each was chosen.\n"
+    "4. Code quality assessment: patterns, anti-patterns, test coverage, modularity, "
+    "readability. Cite specific files and functions.\n"
+    "5. Dependency analysis: direct + transitive risk, outdated packages, security flags.\n"
+    "6. Build/deploy story: dockerized? compose? CI/CD? secrets handling? reproducibility?\n"
+    "7. Runtime behaviour: error handling, observability, performance characteristics, "
+    "scalability limits, concurrency model.\n"
+    "8. Security review: authn/authz, input validation, secret management, known CVEs "
+    "in dependencies, attack surface.\n"
+    "9. Extensibility: how hard is it to add a new feature? What's the plugin story?\n"
+    "10. Competitive landscape: 3-5 similar tools, honest comparison across "
+    "functionality / maturity / license / community. Be opinionated.\n"
+    "11. Maintenance health: commit cadence, open issues/PRs ratio, responsiveness, "
+    "bus factor, funding/ownership model.\n"
+    "12. Red flags and deal-breakers: anything that would stop you from adopting this.\n"
+    "13. Adoption recommendation: who should use it, who shouldn't, and why.\n\n"
+    "Do NOT list the folder structure or file tree. Cite concrete file paths and line "
+    "references when making claims. Be ruthless — if something is sloppy, call it out."
+)
+
 VIDEO_PROMPT = (
     "Summarize this video:\n\n"
     "1. What is the video about? (one paragraph)\n"
@@ -49,6 +75,28 @@ VIDEO_PROMPT = (
     "5. Who is this useful for?\n\n"
     "Be concise and structured."
 )
+
+DETAILED_VIDEO_PROMPT = (
+    "Produce an IN-DEPTH breakdown of this video transcript. Go beyond a surface "
+    "summary — extract everything a viewer would want to reference later. Cover:\n\n"
+    "1. One-paragraph plain-language description of what the video is about.\n"
+    "2. Speaker / presenter: credentials, perspective, biases worth noting.\n"
+    "3. Full section-by-section breakdown with timestamps/markers where possible.\n"
+    "4. All key points and main takeaways, with supporting context.\n"
+    "5. Every technical concept, tool, library, or framework mentioned — with a "
+    "one-line explanation of each.\n"
+    "6. Code snippets, commands, or configuration values shown — reproduced verbatim.\n"
+    "7. Claims and their supporting evidence — flag anything that sounds unsupported.\n"
+    "8. Counterarguments, caveats, or exceptions the speaker mentions.\n"
+    "9. Actionable steps and practical advice — as a numbered checklist.\n"
+    "10. Resources referenced: links, books, papers, GitHub repos, tools.\n"
+    "11. Who this is useful for — and who should skip it.\n"
+    "12. Opinionated takeaway: is this worth the time? What would you do differently?\n\n"
+    "Be thorough. Preserve technical accuracy over brevity. Quote the speaker when "
+    "a phrasing matters."
+)
+
+ANALYSIS_DEPTHS = ("standard", "detailed")
 
 
 class LinkSentinelBot:
@@ -71,6 +119,7 @@ class LinkSentinelBot:
             for key, entry in raw.items():
                 if entry.get("type") == "repo" and isinstance(entry.get("repo"), dict):
                     entry["repo"] = GitHubRepo(**entry["repo"])
+                #Video entries stay as plain dicts — YouTubeVideo is built at dispatch time.
                 restored[key] = entry
             log.info("pending_loaded", count=len(restored))
             return restored
@@ -96,16 +145,22 @@ class LinkSentinelBot:
 
     def _is_allowed(self, update: Update) -> bool:
         """Check if the message comes from an allowed chat."""
-        chat_id = update.effective_chat.id
+        chat = update.effective_chat
+        chat_id = chat.id if chat else None
         user_id = update.effective_user.id if update.effective_user else None
 
         if user_id == self.settings.telegram_owner_id:
             return True
 
-        if self.settings.telegram_group_id and chat_id == self.settings.telegram_group_id:
+        if chat_id is not None and chat_id in self.settings.telegram_group_ids:
             return True
 
-        log.info("unauthorized_access", chat_id=chat_id, user_id=user_id)
+        log.info(
+            "unauthorized_access",
+            chat_id=chat_id,
+            chat_title=chat.title if chat else None,
+            user_id=user_id,
+        )
         return False
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -115,8 +170,8 @@ class LinkSentinelBot:
 
         await update.message.reply_text(
             "Link Sentinel is active.\n\n"
-            "Paste a GitHub or YouTube link, pick how you want the results "
-            "(messages or PDF), and I'll queue the task.\n\n"
+            "Paste a GitHub or YouTube link and pick the analysis depth "
+            "(Standard or Detailed). Results are always delivered as PDF.\n\n"
             "/status - Check bot config\n"
             "/help - Show this message"
         )
@@ -128,9 +183,10 @@ class LinkSentinelBot:
 
         await update.message.reply_text(
             "Link Sentinel\n\n"
-            "Just paste a link and choose delivery format:\n"
+            "Paste a link and pick Standard or Detailed. All output is PDF.\n"
             "- GitHub repo -> full analysis\n"
-            "- YouTube video -> summary\n\n"
+            "- YouTube video -> transcript summary\n"
+            "- Detailed mode -> deeper analysis via a stronger model\n\n"
             "/status - Show bot config"
         )
 
@@ -139,15 +195,29 @@ class LinkSentinelBot:
         if not self._is_allowed(update):
             return
 
+        groups = ", ".join(str(g) for g in self.settings.telegram_group_ids) or "None"
         await update.message.reply_text(
             f"Link Sentinel Status: Active\n\n"
             f"Owner ID: {self.settings.telegram_owner_id}\n"
-            f"Group ID: {self.settings.telegram_group_id or 'Not set'}\n\n"
+            f"Group IDs: {groups}\n\n"
             f"Paths:\n"
             f"`{self.settings.github_clone_dir}`\n"
             f"`{self.settings.github_analysis_dir}`\n"
             f"`{self.settings.youtube_transcript_dir}`\n"
             f"`{self.settings.pipeline_transposed_dir}`",
+            parse_mode="Markdown",
+        )
+
+    async def chatid_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Reply with the current chat's ID — used to enable new groups."""
+        if not self._is_allowed(update):
+            return
+
+        chat = update.effective_chat
+        await update.message.reply_text(
+            f"Chat ID: `{chat.id}`\n"
+            f"Type: {chat.type}\n"
+            f"Title: {chat.title or '(no title)'}",
             parse_mode="Markdown",
         )
 
@@ -181,36 +251,41 @@ class LinkSentinelBot:
             }
             self._save_pending()
 
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("Send as messages", callback_data=f"{key}:msg"),
-                    InlineKeyboardButton("Send as PDF", callback_data=f"{key}:pdf"),
-                ],
-            ])
-
             await update.message.reply_text(
                 f"Repository detected: {repo.full_name}\n"
-                f"How do you want the results?",
-                reply_markup=keyboard,
+                f"Pick analysis depth (output is always PDF):",
+                reply_markup=self._depth_keyboard(key),
             )
 
         for video in videos:
+            key = f"video_{video.video_id}_{chat_id}"
+            self._pending[key] = {
+                "type": "video",
+                "video": {"video_id": video.video_id, "url": video.url},
+                "sender_name": sender_name,
+                "chat_id": chat_id,
+                "message_id": message_id,
+            }
+            self._save_pending()
+
             await update.message.reply_text(
                 f"YouTube video detected: {video.video_id}\n"
-                f"Transcribing and summarizing... this may take a minute."
+                f"Pick analysis depth (output is always PDF):",
+                reply_markup=self._depth_keyboard(key),
             )
-            task = asyncio.create_task(self._process_video(
-                query=None,
-                video=video,
-                sender_name=sender_name,
-                chat_id=chat_id,
-                message_id=message_id,
-                delivery_format="pdf",
-            ))
-            task.add_done_callback(self._log_task_exception)
+
+    @staticmethod
+    def _depth_keyboard(key: str) -> InlineKeyboardMarkup:
+        """Build the two-button depth keyboard — PDF is always the delivery format."""
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Send Standard", callback_data=f"{key}:standard"),
+                InlineKeyboardButton("Send Detailed", callback_data=f"{key}:detailed"),
+            ],
+        ])
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle delivery format choice."""
+        """Handle analysis depth choice — 'standard' or 'detailed'. Output is always PDF."""
         query = update.callback_query
         log.info("callback_received", data=query.data, user_id=query.from_user.id if query.from_user else None)
         await query.answer()
@@ -223,7 +298,10 @@ class LinkSentinelBot:
             log.warning("callback_malformed", data=data)
             return
 
-        key, delivery_format = data.rsplit(":", 1)
+        key, depth = data.rsplit(":", 1)
+        if depth not in ANALYSIS_DEPTHS:
+            log.warning("callback_unknown_depth", depth=depth)
+            return
 
         pending = self._pending.pop(key, None)
         if not pending:
@@ -241,23 +319,43 @@ class LinkSentinelBot:
         sender_name = pending["sender_name"]
 
         if pending["type"] == "repo":
-            repo = pending["repo"]
-            await self._process_repo(query, repo, sender_name, chat_id, message_id, delivery_format)
+            await self._process_repo(query, pending["repo"], sender_name, chat_id, message_id, depth)
+        elif pending["type"] == "video":
+            video_data = pending["video"]
+            video = YouTubeVideo(
+                video_id=video_data["video_id"],
+                url=video_data["url"],
+            )
+            await query.edit_message_text(
+                f"YouTube video: {video.video_id}\n"
+                f"Running {depth} analysis... this may take a minute."
+            )
+            task = asyncio.create_task(self._process_video(
+                query=query,
+                video=video,
+                sender_name=sender_name,
+                chat_id=chat_id,
+                message_id=message_id,
+                depth=depth,
+            ))
+            task.add_done_callback(self._log_task_exception)
 
     async def _process_repo(
         self, query, repo: GitHubRepo,
         sender_name: str | None, chat_id: int, message_id: int,
-        delivery_format: str,
+        depth: str,
     ) -> None:
-        """Process a detected GitHub repository."""
-        log.info("processing_repo", repo=repo.full_name, delivery=delivery_format)
+        """Queue a repo analysis task. Depth picks prompt + downstream agent."""
+        log.info("processing_repo", repo=repo.full_name, depth=depth)
 
+        prompt = DETAILED_REPO_PROMPT if depth == "detailed" else REPO_PROMPT
         task_content = create_repo_analysis_task(
             repo=repo,
             clone_dir=self.settings.github_clone_dir,
             analysis_dir=self.settings.github_analysis_dir,
             sender_name=sender_name,
-            user_prompt=REPO_PROMPT,
+            user_prompt=prompt,
+            analysis_depth=depth,
         )
 
         task_path = write_task_file(
@@ -276,23 +374,22 @@ class LinkSentinelBot:
             task_type="repo_analysis",
             result_path=result_path,
             label=repo.full_name,
-            delivery_format=delivery_format,
+            analysis_depth=depth,
         )
 
-        fmt = "PDF file" if delivery_format == "pdf" else "messages"
         await query.edit_message_text(
             f"Repository: {repo.full_name}\n"
-            f"Analysis task queued.\n"
-            f"Results will be sent as {fmt} when ready."
+            f"{depth.capitalize()} analysis queued.\n"
+            f"PDF will be delivered when ready."
         )
 
     async def _process_video(
         self, query, video: YouTubeVideo,
         sender_name: str | None, chat_id: int, message_id: int,
-        delivery_format: str,
+        depth: str,
     ) -> None:
-        """Process a YouTube video — transcribe + summarize, always PDF."""
-        log.info("processing_video", video_id=video.video_id, delivery=delivery_format)
+        """Process a YouTube video — transcribe + summarize at the chosen depth, PDF-only."""
+        log.info("processing_video", video_id=video.video_id, depth=depth)
 
         bot = query.get_bot() if query else self.application.bot
 
@@ -301,21 +398,27 @@ class LinkSentinelBot:
                 url=video.url,
                 video_id=video.video_id,
                 transcript_dir=self.settings.youtube_transcript_dir,
+                depth=depth,
             )
 
             title = video_title or video.video_id
-            log.info("video_summarized", video_id=video.video_id)
+            log.info("video_summarized", video_id=video.video_id, depth=depth)
 
+            suffix = "_detailed" if depth == "detailed" else ""
             pdf_path = await markdown_to_pdf(
                 summary, title,
                 template="video_summary",
-                metadata={"video_title": title, "video_url": video.url},
+                metadata={
+                    "video_title": title,
+                    "video_url": video.url,
+                    "analysis_depth": depth.capitalize(),
+                },
             )
             await bot.send_document(
                 chat_id=chat_id,
                 document=open(pdf_path, "rb"),
-                filename=f"{title.replace(' ', '_')[:50]}_summary.pdf",
-                caption=f"Summary: {title}",
+                filename=f"{title.replace(' ', '_')[:50]}{suffix}_summary.pdf",
+                caption=f"{depth.capitalize()} summary: {title}",
             )
 
         except Exception as e:
@@ -357,6 +460,7 @@ class LinkSentinelBot:
         self.application.add_handler(CommandHandler("start", self.start_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("status", self.status_command))
+        self.application.add_handler(CommandHandler("chatid", self.chatid_command))
         self.application.add_handler(CallbackQueryHandler(self._handle_callback))
 
         if self.settings.auto_analyze:
@@ -373,7 +477,7 @@ class LinkSentinelBot:
         log.info(
             "starting_bot",
             owner_id=self.settings.telegram_owner_id,
-            group_id=self.settings.telegram_group_id,
+            group_ids=self.settings.telegram_group_ids,
         )
 
         app = self.build_application()
