@@ -27,26 +27,78 @@ class GitHubRepo:
         return f"{self.owner}_{self.repo}"
 
 
-#Regex patterns for GitHub URLs
+#Path segments that are github.com platform features, not user/org accounts.
+#Guards against false positives when a URL points to a github.com feature page
+#(e.g. /settings/profile, /marketplace/actions/checkout).
+RESERVED_OWNERS = frozenset({
+    'about', 'account', 'apps', 'codespaces', 'collections', 'contact',
+    'dashboard', 'enterprise', 'events', 'explore', 'features', 'gist',
+    'issues', 'login', 'logout', 'marketplace', 'mobile', 'new',
+    'notifications', 'orgs', 'pricing', 'pulls', 'search', 'security',
+    'settings', 'signup', 'site', 'sponsors', 'stars', 'topics',
+    'trending', 'watching',
+})
+
+
+#Regex patterns for GitHub URLs.
+#Matches the canonical owner/repo even when the full URL carries extra path
+#segments (/blob/..., /tree/..., /pull/..., /share) or tracking query params
+#(?utm_source=share, ?tab=readme-ov-file) -- the shapes produced by GitHub's
+#Share button and mobile/desktop share flows. Without this tolerance, shared
+#links were silently dropped because the previous regex was anchored at $.
 GITHUB_PATTERNS = [
-    #https://github.com/owner/repo
-    re.compile(r'https?://github\.com/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_.-]+)(?:\.git)?/?(?:[#?].*)?$'),
-    #git@github.com:owner/repo.git
-    re.compile(r'git@github\.com:([a-zA-Z0-9_-]+)/([a-zA-Z0-9_.-]+)(?:\.git)?$'),
-    #github.com/owner/repo (without protocol)
-    re.compile(r'github\.com/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_.-]+)(?:\.git)?/?(?:[#?].*)?'),
+    #https(s)://[www.]github.com/owner/repo[.git][/extra/path][?query][#frag]
+    re.compile(
+        r'https?://(?:www\.)?github\.com/'
+        r'([a-zA-Z0-9][a-zA-Z0-9_-]*)/'
+        r'([a-zA-Z0-9][a-zA-Z0-9_.-]*?)'
+        r'(?:\.git)?'
+        r'(?:[/#?][^\s]*)?'
+        r'(?=\s|$)'
+    ),
+    #git@github.com:owner/repo.git (SSH)
+    re.compile(
+        r'git@github\.com:'
+        r'([a-zA-Z0-9][a-zA-Z0-9_-]*)/'
+        r'([a-zA-Z0-9][a-zA-Z0-9_.-]*?)'
+        r'(?:\.git)?'
+        r'(?=\s|$)'
+    ),
+    #Bare github.com/owner/repo[/extra/path]... (no protocol)
+    re.compile(
+        r'(?<![a-zA-Z0-9./])github\.com/'
+        r'([a-zA-Z0-9][a-zA-Z0-9_-]*)/'
+        r'([a-zA-Z0-9][a-zA-Z0-9_.-]*?)'
+        r'(?:\.git)?'
+        r'(?:[/#?][^\s]*)?'
+        r'(?=\s|$)'
+    ),
 ]
+
+
+def _clean_repo_name(repo: str) -> str:
+    """Strip a trailing .git suffix and trailing dots from a repo slug."""
+    if repo.endswith('.git'):
+        repo = repo[:-4]
+    return repo.rstrip('.')
 
 
 def extract_github_urls(text: str) -> list[GitHubRepo]:
     """
     Extract all GitHub repository URLs from text.
 
+    Tolerates "shared"-style URLs produced by GitHub's Share button,
+    mobile app, and deep-link flows: URLs that carry extra path segments
+    (/blob/..., /tree/..., /pull/..., /share) or tracking query params
+    (?utm_source=share, ?tab=readme-ov-file). Every match is normalized
+    back to the canonical https://github.com/<owner>/<repo> form so the
+    downstream clone/PDF stage receives a clean repo URL.
+
     Args:
         text: Text that may contain GitHub URLs
 
     Returns:
-        List of parsed GitHubRepo objects
+        List of parsed GitHubRepo objects (deduplicated by owner/repo)
     """
     repos = []
     seen = set()
@@ -54,9 +106,13 @@ def extract_github_urls(text: str) -> list[GitHubRepo]:
     for pattern in GITHUB_PATTERNS:
         for match in pattern.finditer(text):
             owner = match.group(1)
-            repo = match.group(2).rstrip('.git')
+            repo = _clean_repo_name(match.group(2))
 
-            #Deduplicate
+            if not repo:
+                continue
+            if owner.lower() in RESERVED_OWNERS:
+                continue
+
             key = f"{owner}/{repo}"
             if key not in seen:
                 seen.add(key)

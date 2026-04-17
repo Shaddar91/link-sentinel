@@ -1,7 +1,7 @@
 """Configuration settings for Link Sentinel."""
 import os
 from pathlib import Path
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -11,7 +11,22 @@ class Settings(BaseSettings):
     #Telegram Bot Configuration
     telegram_bot_token: str = Field(..., description="Telegram bot API token")
     telegram_owner_id: int = Field(..., description="Your Telegram user ID (bot always responds to you)")
-    telegram_group_id: int | None = Field(default=None, description="Group chat ID where the bot also responds")
+    telegram_group_ids: list[int] = Field(
+        default_factory=list,
+        description="Comma-separated list of group chat IDs where the bot responds",
+    )
+
+    @field_validator("telegram_group_ids", mode="before")
+    @classmethod
+    def _split_group_ids(cls, v):
+        """Accept JSON arrays, comma-separated strings, or a bare int from env vars."""
+        if v is None or v == "":
+            return []
+        if isinstance(v, int):
+            return [v]
+        if isinstance(v, str):
+            return [int(x.strip()) for x in v.split(",") if x.strip()]
+        return v
 
     #AI Task Automation Pipeline Paths
     pipeline_transposed_dir: Path = Field(

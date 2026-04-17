@@ -90,6 +90,92 @@ def test_deduplicate_same_repo():
     assert len(repos) == 1
 
 
+def test_shared_link_with_blob_path():
+    """Shared link pointing at a specific file is normalized to owner/repo."""
+    repo = parse_github_url("https://github.com/owner/repo/blob/main/README.md")
+    assert repo is not None
+    assert repo.full_name == "owner/repo"
+    assert repo.url == "https://github.com/owner/repo"
+
+
+def test_shared_link_with_tree_path():
+    """Shared link pointing at a branch/tree view."""
+    repo = parse_github_url("https://github.com/owner/repo/tree/main/src")
+    assert repo is not None
+    assert repo.full_name == "owner/repo"
+
+
+def test_shared_link_with_pull_request():
+    """Shared link pointing at a pull request."""
+    repo = parse_github_url("https://github.com/owner/repo/pull/123")
+    assert repo is not None
+    assert repo.full_name == "owner/repo"
+
+
+def test_shared_link_with_issue():
+    """Shared link pointing at an issue."""
+    repo = parse_github_url("https://github.com/owner/repo/issues/42")
+    assert repo is not None
+    assert repo.full_name == "owner/repo"
+
+
+def test_shared_link_with_share_suffix():
+    """URL with literal /share path segment (GitHub share flow)."""
+    repo = parse_github_url("https://github.com/owner/repo/share")
+    assert repo is not None
+    assert repo.full_name == "owner/repo"
+
+
+def test_shared_link_with_utm_share_param():
+    """Share-flow URL from GitHub mobile app with utm tracking."""
+    repo = parse_github_url("https://github.com/owner/repo?utm_source=share")
+    assert repo is not None
+    assert repo.full_name == "owner/repo"
+
+
+def test_shared_link_with_readme_tab_ref():
+    """Modern GitHub Share button includes ?tab=readme-ov-file."""
+    repo = parse_github_url("https://github.com/owner/repo?tab=readme-ov-file")
+    assert repo is not None
+    assert repo.full_name == "owner/repo"
+
+
+def test_shared_link_embedded_in_message():
+    """Shared URL surrounded by sentence text still triggers detection."""
+    text = (
+        "hey man check this out: https://github.com/owner/repo/blob/main/src/bot.py "
+        "-- love the structure"
+    )
+    repos = extract_github_urls(text)
+    assert len(repos) == 1
+    assert repos[0].full_name == "owner/repo"
+
+
+def test_shared_link_normalized_to_clone_url():
+    """Normalized shared URL must round-trip to the canonical clone URL."""
+    repo = parse_github_url("https://github.com/Shaddar91/link-sentinel/tree/main?utm_source=share")
+    assert repo is not None
+    assert repo.full_name == "Shaddar91/link-sentinel"
+    assert repo.clone_url == "https://github.com/Shaddar91/link-sentinel.git"
+
+
+def test_reserved_owner_settings_skipped():
+    """github.com/settings/... is a platform page, not a repo."""
+    assert parse_github_url("https://github.com/settings/profile") is None
+
+
+def test_reserved_owner_marketplace_skipped():
+    """github.com/marketplace/... is a platform page, not a repo."""
+    assert parse_github_url("https://github.com/marketplace/actions/checkout") is None
+
+
+def test_www_subdomain_supported():
+    """www.github.com/owner/repo should parse just like github.com."""
+    repo = parse_github_url("https://www.github.com/owner/repo")
+    assert repo is not None
+    assert repo.full_name == "owner/repo"
+
+
 if __name__ == "__main__":
     test_parse_https_url()
     test_parse_https_url_with_git_suffix()
@@ -101,4 +187,16 @@ if __name__ == "__main__":
     test_clone_url()
     test_folder_name()
     test_deduplicate_same_repo()
+    test_shared_link_with_blob_path()
+    test_shared_link_with_tree_path()
+    test_shared_link_with_pull_request()
+    test_shared_link_with_issue()
+    test_shared_link_with_share_suffix()
+    test_shared_link_with_utm_share_param()
+    test_shared_link_with_readme_tab_ref()
+    test_shared_link_embedded_in_message()
+    test_shared_link_normalized_to_clone_url()
+    test_reserved_owner_settings_skipped()
+    test_reserved_owner_marketplace_skipped()
+    test_www_subdomain_supported()
     print("All tests passed!")
