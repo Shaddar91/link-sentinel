@@ -26,14 +26,14 @@ STANDARD_DEPTH = "standard"
 def _resolve_depth_config(analysis_depth: str) -> dict[str, str]:
     """Pick agent + priority + complexity based on requested analysis depth.
 
-    Detailed mode uses the same analyzer agent at a higher complexity score
-    so the orchestrator selects a stronger model (Opus). The richer prompt
-    drives deeper output — the agent does not change.
+    Detailed mode routes to the `repo-analyzer-detailed` variant, which has
+    web access for fact-checking and a richer system prompt. Standard mode
+    stays on the base `repo-analyzer`.
     """
     if analysis_depth == DETAILED_DEPTH:
         return {
             "depth": DETAILED_DEPTH,
-            "agent": "repo-analyzer",
+            "agent": "repo-analyzer-detailed",
             "priority_bump": "High",
             "complexity_score": "85",
             "focus_hint": "deep (architecture, code quality, security, dependencies, competitive landscape)",
@@ -171,14 +171,14 @@ def create_repo_analysis_task(
 def _resolve_video_depth_config(analysis_depth: str) -> dict[str, str]:
     """Video equivalent of the repo depth resolver.
 
-    Detailed mode uses the same analyzer agent at a higher complexity score
-    so the orchestrator selects a stronger model (Opus). The richer prompt
-    drives deeper output — the agent does not change.
+    Detailed mode routes to the `video-summarizer-detailed` variant, which
+    has web access for fact-checking and a richer system prompt. Standard
+    mode stays on the base `video-summarizer`.
     """
     if analysis_depth == DETAILED_DEPTH:
         return {
             "depth": DETAILED_DEPTH,
-            "agent": "video-summarizer",
+            "agent": "video-summarizer-detailed",
             "priority_bump": "High",
             "complexity_score": "75",
             "focus_hint": "deep (section-by-section, technical details, sources, counterpoints)",

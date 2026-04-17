@@ -37,7 +37,7 @@ def test_repo_depth_config_standard():
 
 def test_repo_depth_config_detailed():
     cfg = _resolve_depth_config(DETAILED_DEPTH)
-    assert cfg["agent"] == "repo-analyzer"
+    assert cfg["agent"] == "repo-analyzer-detailed"
     assert cfg["complexity_score"] == "85"
     assert cfg["priority_bump"] == "High"
 
@@ -55,7 +55,7 @@ def test_video_depth_config_standard():
 
 def test_video_depth_config_detailed():
     cfg = _resolve_video_depth_config(DETAILED_DEPTH)
-    assert cfg["agent"] == "video-summarizer"
+    assert cfg["agent"] == "video-summarizer-detailed"
     assert cfg["complexity_score"] == "75"
     assert cfg["priority_bump"] == "High"
 
@@ -76,7 +76,7 @@ def test_create_repo_task_standard_includes_repo_analyzer():
     assert '"analysis_depth": "standard"' in task
 
 
-def test_create_repo_task_detailed_keeps_repo_analyzer():
+def test_create_repo_task_detailed_uses_detailed_variant():
     repo = _make_repo()
     task = create_repo_analysis_task(
         repo=repo,
@@ -86,10 +86,10 @@ def test_create_repo_task_detailed_keeps_repo_analyzer():
         analysis_depth=DETAILED_DEPTH,
     )
     assert "**Analysis-Depth:** detailed" in task
-    assert "**Target Agent:** repo-analyzer" in task
+    assert "**Target Agent:** repo-analyzer-detailed" in task
     assert "**Priority:** High" in task
     assert "**Complexity-Score:** 85" in task
-    assert '"agent": "repo-analyzer"' in task
+    assert '"agent": "repo-analyzer-detailed"' in task
     assert '"analysis_depth": "detailed"' in task
 
 
@@ -113,10 +113,10 @@ def test_create_video_task_detailed():
         analysis_depth=DETAILED_DEPTH,
     )
     assert "**Analysis-Depth:** detailed" in task
-    assert "**Target Agent:** video-summarizer" in task
+    assert "**Target Agent:** video-summarizer-detailed" in task
     assert "**Priority:** High" in task
     assert "**Complexity-Score:** 75" in task
-    assert '"agent": "video-summarizer"' in task
+    assert '"agent": "video-summarizer-detailed"' in task
     assert '"analysis_depth": "detailed"' in task
 
 
@@ -142,7 +142,7 @@ if __name__ == "__main__":
         test_video_depth_config_standard,
         test_video_depth_config_detailed,
         test_create_repo_task_standard_includes_repo_analyzer,
-        test_create_repo_task_detailed_keeps_repo_analyzer,
+        test_create_repo_task_detailed_uses_detailed_variant,
         test_create_video_task_standard,
         test_create_video_task_detailed,
         test_detailed_repo_task_priority_overrides_caller_default,
